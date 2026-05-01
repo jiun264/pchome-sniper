@@ -394,7 +394,9 @@ class PChomeSniper:
 
         # 4. 登入
         self.wait_for_login()
+        self._log("正在同步瀏覽器登入狀態至監控模組...", 'ACTION')
         self.sync_cookies_to_session()
+        self._log("登入狀態同步完成", 'OK')
 
         # 5. 預先載入商品頁面 (加速後續操作)
         self._log("預先載入商品頁面...", 'ACTION')
@@ -414,8 +416,8 @@ class PChomeSniper:
                 check_count += 1
                 avail, status = self.check_availability()
 
-                # 每 20 次顯示一次狀態
-                if check_count % 20 == 0:
+                # 每 3 次顯示一次狀態 (約 1 秒顯示一次)
+                if check_count % 3 == 0:
                     elapsed = time.time() - start_time
                     self._log(
                         f"第 {check_count} 次 | 已等待 {elapsed:.0f}s | {status}",

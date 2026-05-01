@@ -24,7 +24,7 @@ cd c:\Users\brian\Desktop\Code\pchome-sniper
 python pchome_sniper.py [商品網址或ID] -c
 ```
 *例如：*
-`python pchome_sniper.py https://24h.pchome.com.tw/prod/DRADD4-A900IDYBY -c`
+`python pchome_sniper.py [商品網址或ID] -c`
 
 ---
 

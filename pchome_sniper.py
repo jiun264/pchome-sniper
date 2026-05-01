@@ -416,14 +416,15 @@ class PChomeSniper:
 
                 if avail:
                     self._log("🎯🎯🎯  商品可購買！立即搶購！", 'OK')
-                    self._beep(3)
 
                     # 嘗試加入購物車
                     success = self.add_to_cart_via_browser()
 
                     if success:
-                        self.navigate_to_cart()
-                        self._beep(5)
+                        # 跳轉到結帳頁面
+                        self._log("正在跳轉至結帳頁面...", 'ACTION')
+                        self.driver.get("https://eccart.pchome.com.tw/cart/v1/container/24H")
+                        self._log("已跳轉至購物車，請『立刻』完成最後結帳步驟！", 'OK')
                         self._log("══════════════════════════════════", 'OK')
                         self._log("  🎉 搶購完成！請儘速完成結帳！  ", 'OK')
                         self._log("══════════════════════════════════", 'OK')

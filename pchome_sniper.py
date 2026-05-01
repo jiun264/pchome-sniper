@@ -179,21 +179,21 @@ class PChomeSniper:
     # ─── 瀏覽器操作 ──────────────────────────────────────────
 
     def setup_browser(self):
-        """啟動瀏覽器"""
-        import os
+        """啟動或連線至瀏覽器 (還原最簡連線版)"""
         from selenium.webdriver.chrome.options import Options as ChromeOptions
         
         if getattr(self, 'connect_mode', False):
-            self._log("使用接管模式連線至現有 Chrome (Port 9223)...", 'INFO')
+            self._log("準備連線至現有 Chrome (Port 9223)...", 'INFO')
             options = ChromeOptions()
             options.add_experimental_option("debuggerAddress", "127.0.0.1:9223")
             try:
+                # 還原成最簡單、原本會通的連線方式
                 self.driver = webdriver.Chrome(options=options)
                 self._log("✅ 成功接管 Chrome 瀏覽器！", 'OK')
                 return
             except Exception as e:
                 self._log(f"接管失敗: {e}", 'ERROR')
-                self._log("請確認您有先執行 launch_chrome.bat 開啟瀏覽器！", 'ERROR')
+                self._log("請確認 launch_chrome.bat 開啟的視窗還在。", 'ERROR')
                 raise e
 
         user_data_dir = None
@@ -251,118 +251,86 @@ class PChomeSniper:
         self._log("✅ 一般 Selenium Chrome 啟動完成", 'OK')
 
     def wait_for_login(self):
-        """處理登入狀態。如果是接管模式，則跳過手動確認。"""
+        """處理登入狀態。如果是接管模式，則跳過。"""
         if getattr(self, 'connect_mode', False):
-            self._log("接管模式：延用瀏覽器現有登入狀態，跳過手動登入確認。", 'OK')
+            self._log("接管模式：延用瀏覽器現有登入狀態。", 'OK')
             return
 
-        self.driver.get("https://24h.pchome.com.tw/")
-        self._log("嘗試從本機 Chrome/Edge 讀取登入狀態...", 'INFO')
-        
-        try:
-            import browser_cookie3
-            cj = None
-            try:
-                cj = browser_cookie3.chrome(domain_name='pchome.com.tw')
-            except:
-                pass
-            if not cj:
-                try:
-                    cj = browser_cookie3.edge(domain_name='pchome.com.tw')
-                except:
-                    pass
-            
-            if cj:
-                count = 0
-                for c in cj:
-                    cookie_dict = {'name': c.name, 'value': c.value, 'domain': c.domain, 'path': c.path}
-                    try:
-                        self.driver.add_cookie(cookie_dict)
-                        count += 1
-                    except:
-                        pass
-                if count > 0:
-                    self._log(f"✅ 成功從你的瀏覽器匯入 {count} 個登入憑證！", 'OK')
-                    self.driver.refresh()
-                    time.sleep(2)
-                    self._log("如果網頁右上角顯示已登入，就不需要手動登入了。", 'OK')
-                    return
-        except Exception as e:
-            self._log(f"無法自動讀取本機登入狀態: {e}", 'WARN')
-
         self.driver.get("https://24h.pchome.com.tw/sign/in")
-        self._log("⚠  請在跳出的瀏覽器視窗中登入 PChome 帳號", 'WARN')
-        self._log("⚠  登入完成後，請回到此視窗按 Enter", 'WARN')
+        self._log("⚠ 請在瀏覽器中登入 PChome，完成後回到此視窗按 Enter", 'WARN')
         input(f"{Color.YELLOW}>>> 登入完成後按 Enter 繼續...{Color.RESET}")
-        self._log("登入確認完成", 'OK')
 
     def sync_cookies_to_session(self):
         """將瀏覽器 cookies 同步到 requests session"""
-        for cookie in self.driver.get_cookies():
-            self.session.cookies.set(cookie['name'], cookie['value'])
+        try:
+            for cookie in self.driver.get_cookies():
+                self.session.cookies.set(cookie['name'], cookie['value'])
+        except:
+            pass
 
     def add_to_cart_via_browser(self):
-        """用瀏覽器自動點擊加入購物車"""
-        self._log("嘗試瀏覽器方式加入購物車...", 'ACTION')
+        """用瀏覽器點擊加入購物車 (三連擊穩健版)"""
+        self._log("⚡ 啟動連擊 (立即購買 -> 結帳 -> 排除彈窗)...", 'ACTION')
         try:
-            self.driver.get(self.PROD_PAGE.format(prod_id=self.prod_id))
-            wait = WebDriverWait(self.driver, 8)
+            self.driver.execute_script("""
+                // 1. 點擊規格 (優先第一個)
+                var specSelectors = ['.spec-item', 'li[data-value]', '.c-dropdown__item', '.spec_btn'];
+                specSelectors.forEach(s => {
+                    var el = document.querySelector(s);
+                    if(el && el.offsetParent !== null) el.click();
+                });
 
-            # PChome 加入購物車按鈕的各種可能 selector
-            btn_selectors = [
-                (By.CSS_SELECTOR, "button[data-qa='add_cart']"),
-                (By.CSS_SELECTOR, "button.btn-cart"),
-                (By.CSS_SELECTOR, "#ButtonContainer button"),
-                (By.CSS_SELECTOR, "button[class*='cart']"),
-                (By.XPATH, "//button[contains(text(),'入購物車')]"),
-                (By.XPATH, "//button[contains(text(),'搶購')]"),
-                (By.XPATH, "//button[contains(text(),'立即購買')]"),
-                (By.XPATH, "//a[contains(text(),'入購物車')]"),
-            ]
-
-            for by, selector in btn_selectors:
-                try:
-                    btn = wait.until(EC.element_to_be_clickable((by, selector)))
-                    btn.click()
-                    self._log("✅ 已點擊加入購物車按鈕！", 'OK')
-                    time.sleep(0.1)
-                    return True
-                except (TimeoutException, NoSuchElementException,
-                        ElementClickInterceptedException):
-                    continue
-
-            # 最後嘗試: 用 JavaScript 點擊所有看起來像購物車按鈕的元素
-            clicked = self.driver.execute_script("""
-                var buttons = document.querySelectorAll('button, a');
-                for (var b of buttons) {
-                    var text = b.textContent || '';
-                    if (text.includes('購物車') || text.includes('搶購')
-                        || text.includes('立即購買')) {
+                // 2. 第一擊：點擊「立即購買」
+                var allBtns = document.querySelectorAll('button, a, .btn-buy');
+                for (var b of allBtns) {
+                    var txt = (b.innerText || '').trim();
+                    if ((txt.includes('立即購買') || txt.includes('直接購買')) && b.offsetParent !== null) {
                         b.click();
-                        return true;
+                        break;
                     }
                 }
-                return false;
+
+                // 3. 第二擊：等候 0.2 秒點擊右側抽屜的「結帳」按鈕
+                setTimeout(() => {
+                    var checkoutBtns = document.querySelectorAll('.c-miniCart__btn--checkout, button.btn-checkout, a[href*="cart/index"]');
+                    checkoutBtns.forEach(cb => {
+                        if(cb.offsetParent !== null) cb.click();
+                    });
+                }, 200);
+
+                // 4. 自動排除障礙：監控並點掉彈窗
+                var dismissInterval = setInterval(() => {
+                    var popups = document.querySelectorAll('.ui-dialog-buttonset button, .btn-confirm, button:contains("確定")');
+                    popups.forEach(p => {
+                        if(p.offsetParent !== null) p.click();
+                    });
+                }, 150);
+                setTimeout(() => clearInterval(dismissInterval), 5000);
             """)
-            if clicked:
-                self._log("✅ JS 點擊加入購物車成功！", 'OK')
-                time.sleep(1)
-                return True
-
-            self._log("找不到加入購物車按鈕", 'ERROR')
-            return False
-
+            
+            # 稍微等待跳轉啟動
+            time.sleep(0.5) 
+            return True
         except Exception as e:
-            self._log(f"瀏覽器加入購物車失敗: {e}", 'ERROR')
+            self._log(f"連擊過程異常: {e}", 'WARN')
             return False
 
     def navigate_to_cart(self):
-        """導航至購物車頁面"""
-        try:
-            self.driver.get(self.CART_URL)
-            self._log("✅ 已跳轉至購物車結帳頁面", 'OK')
-        except Exception as e:
-            self._log(f"跳轉購物車失敗: {e}", 'ERROR')
+        """導航至結帳入口 (守株待兔版)"""
+        self._log("正在等待瀏覽器自動跳轉至結帳頁面...", 'ACTION')
+        
+        for attempt in range(25): # 5 秒監控
+            time.sleep(0.2)
+            current_url = self.driver.current_url
+            
+            if "cart" in current_url or "ecpay" in current_url or "payinfo" in current_url:
+                self._log("✅ 成功抵達結帳/付款頁面！", 'OK')
+                return True
+                
+            if attempt == 15 and "prod" in current_url: # 3秒後還在商品頁
+                self.driver.get("https://shopping.pchome.com.tw/cart/view/24h")
+            
+        return False
 
     # ─── 主流程 ──────────────────────────────────────────────
 
@@ -399,9 +367,12 @@ class PChomeSniper:
         self._log("登入狀態同步完成", 'OK')
 
         # 5. 預先載入商品頁面 (加速後續操作)
-        self._log("預先載入商品頁面...", 'ACTION')
-        self.driver.get(self.PROD_PAGE.format(prod_id=self.prod_id))
-        time.sleep(1)
+        if not getattr(self, 'connect_mode', False):
+            self._log("預先載入商品頁面...", 'ACTION')
+            self.driver.get(self.PROD_PAGE.format(prod_id=self.prod_id))
+            time.sleep(1)
+        else:
+            self._log("接管模式：保留目前瀏覽器頁面狀態與規格選擇。", 'OK')
 
         # 6. 開始監控
         self._log(f"🔍 開始監控商品 (間隔: {self.interval}s)", 'MONITOR')
@@ -428,22 +399,28 @@ class PChomeSniper:
                     self._log("🎯🎯🎯  商品可購買！立即搶購！", 'OK')
                     self._beep(3) # 非同步嗶聲，不佔用時間
 
-                    # 嘗試加入購物車
-                    success = self.add_to_cart_via_browser()
-
-                    if success:
-                        # 跳轉到結帳頁面
-                        self._log("正在跳轉至結帳頁面...", 'ACTION')
-                        self.driver.get("https://eccart.pchome.com.tw/cart/v1/container/24H")
-                        self._beep(5)
-                        self._log("已跳轉至購物車，請『立刻』完成最後結帳步驟！", 'OK')
-                        self._log("══════════════════════════════════", 'OK')
-                        self._log("  🎉 搶購完成！請儘速完成結帳！  ", 'OK')
-                        self._log("══════════════════════════════════", 'OK')
-                        break
+                    # 嘗試點擊
+                    if self.add_to_cart_via_browser():
+                        # 執行跳轉與檢查
+                        is_in_cart = self.navigate_to_cart()
+                        
+                        if is_in_cart:
+                            self._log("🎉 成功進入結帳頁面！請立刻手動完成最後步驟！", 'OK')
+                            self._beep(5)
+                            self._log("══════════════════════════════════", 'OK')
+                            self._log("   搶購動作完成，請人工接手結帳   ", 'OK')
+                            self._log("══════════════════════════════════", 'OK')
+                            break # 成功才跳出迴圈
+                        else:
+                            self._log("❌ 三次跳轉購物車都失敗，可能沒點到按鈕或被系統阻擋。", 'ERROR')
+                            self._log("🔄 回到商品頁重新嘗試...", 'WARN')
+                            # 回到商品頁面繼續下一輪監控
+                            self.driver.get(self.PROD_PAGE.format(prod_id=self.prod_id))
+                            time.sleep(1)
+                            continue
                     else:
                         # 失敗則重試
-                        self._log("加入購物車失敗，0.5 秒後重試...", 'WARN')
+                        self._log("加入購物車腳本執行失敗，0.5 秒後重試...", 'WARN')
                         time.sleep(0.5)
                         continue
 

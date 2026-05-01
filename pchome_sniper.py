@@ -81,13 +81,14 @@ class PChomeSniper:
         'Origin': 'https://24h.pchome.com.tw',
     }
 
-    def __init__(self, url, interval=0.3, browser='edge', qty=1, use_user_profile=False):
+    def __init__(self, url, interval=0.3, browser='edge', qty=1, use_user_profile=False, connect_mode=False):
         self.url = url
         self.prod_id = self._extract_prod_id(url)
         self.interval = interval
         self.browser_type = browser
         self.qty = qty
         self.use_user_profile = use_user_profile
+        self.connect_mode = connect_mode
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
         self.driver = None
@@ -174,11 +175,40 @@ class PChomeSniper:
     # ─── 瀏覽器操作 ──────────────────────────────────────────
 
     def setup_browser(self):
-        """啟動瀏覽器，使用 undetected-chromedriver 避免登入被擋"""
+        """啟動瀏覽器"""
         import os
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        
+        if getattr(self, 'connect_mode', False):
+            self._log("使用接管模式連線至現有 Chrome (Port 9223)...", 'INFO')
+            options = ChromeOptions()
+            options.add_experimental_option("debuggerAddress", "127.0.0.1:9223")
+            try:
+                self.driver = webdriver.Chrome(options=options)
+                self._log("✅ 成功接管 Chrome 瀏覽器！", 'OK')
+                return
+            except Exception as e:
+                self._log(f"接管失敗: {e}", 'ERROR')
+                self._log("請確認您有先執行 launch_chrome.bat 開啟瀏覽器！", 'ERROR')
+                raise e
+
+        user_data_dir = None
+        if getattr(self, 'use_user_profile', False):
+            user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+            self._log(f"載入現有 Chrome 設定檔: {user_data_dir}", 'WARN')
+            self._log("⚠ 警告: 必須完全關閉所有 Chrome 視窗(包含背景)才能載入登入狀態！", 'WARN')
+            ans = input(f"{Color.YELLOW}>>> 是否要讓程式自動強制關閉所有 Chrome 視窗？(y/n) [預設: y]: {Color.RESET}").strip().lower()
+            if ans != 'n':
+                self._log("正在強制關閉 Chrome...", 'ACTION')
+                os.system("taskkill /F /IM chrome.exe /T >nul 2>&1")
+                import time
+                time.sleep(2)  # 等待程序完全終止
+                self._log("Chrome 已關閉，繼續啟動...", 'OK')
+
+        # 嘗試使用 undetected-chromedriver
         try:
             import undetected_chromedriver as uc
-            self._log("使用 undetected-chromedriver 啟動 Chrome...", 'INFO')
+            self._log("嘗試使用 undetected-chromedriver 啟動 Chrome...", 'INFO')
             
             options = uc.ChromeOptions()
             options.add_argument('--no-sandbox')
@@ -186,39 +216,76 @@ class PChomeSniper:
             options.add_argument('--disable-gpu')
             options.add_argument('--start-maximized')
             options.add_argument('--disable-popup-blocking')
-            
-            # 使用現有 Chrome Profile (如果使用者有加上 --user-profile 參數)
-            if getattr(self, 'use_user_profile', False):
-                user_data_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-                self._log(f"載入現有 Chrome 設定檔: {user_data_dir}", 'WARN')
-                self._log("請確保您已經完全關閉了所有其他的 Chrome 視窗，否則會啟動失敗！", 'WARN')
+            if user_data_dir:
                 options.add_argument(f'--user-data-dir={user_data_dir}')
             
             self.driver = uc.Chrome(options=options)
-            
-        except ImportError:
-            self._log("未安裝 undetected-chromedriver，降級為一般 Selenium", 'WARN')
-            from selenium.webdriver.chrome.options import Options
-            options = Options()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--start-maximized')
-            options.add_argument('--disable-popup-blocking')
-            
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                'source': "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            })
+            self._log("✅ undetected-chromedriver 啟動成功", 'OK')
+            return
+        except Exception as e:
+            self._log(f"undetected-chromedriver 啟動失敗 ({e})，降級為一般 Selenium", 'WARN')
 
-        self._log("瀏覽器啟動完成", 'OK')
+        # 降級為一般 Selenium
+        options = ChromeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--start-maximized')
+        options.add_argument('--disable-popup-blocking')
+        
+        # 移除防偵測參數，避免閃退
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        if user_data_dir:
+            options.add_argument(f'--user-data-dir={user_data_dir}')
+            
+        self.driver = webdriver.Chrome(options=options)
+        self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+        })
+        self._log("✅ 一般 Selenium Chrome 啟動完成", 'OK')
 
     def wait_for_login(self):
-        """讓使用者手動登入"""
+        """自動從本機瀏覽器(Chrome/Edge)擷取登入狀態，若失敗則讓使用者手動登入"""
+        self.driver.get("https://24h.pchome.com.tw/")
+        self._log("嘗試從本機 Chrome/Edge 讀取登入狀態...", 'INFO')
+        
+        try:
+            import browser_cookie3
+            cj = None
+            try:
+                cj = browser_cookie3.chrome(domain_name='pchome.com.tw')
+            except:
+                pass
+            if not cj:
+                try:
+                    cj = browser_cookie3.edge(domain_name='pchome.com.tw')
+                except:
+                    pass
+            
+            if cj:
+                count = 0
+                for c in cj:
+                    cookie_dict = {'name': c.name, 'value': c.value, 'domain': c.domain, 'path': c.path}
+                    try:
+                        self.driver.add_cookie(cookie_dict)
+                        count += 1
+                    except:
+                        pass
+                if count > 0:
+                    self._log(f"✅ 成功從你的瀏覽器匯入 {count} 個登入憑證！", 'OK')
+                    self.driver.refresh()
+                    time.sleep(2)
+                    self._log("如果網頁右上角顯示已登入，就不需要手動登入了。", 'OK')
+                    return
+        except Exception as e:
+            self._log(f"無法自動讀取本機登入狀態: {e}", 'WARN')
+
         self.driver.get("https://24h.pchome.com.tw/sign/in")
-        self._log("⚠  請在瀏覽器中登入 PChome 帳號", 'WARN')
-        self._log("⚠  登入完成後回到此視窗按 Enter", 'WARN')
-        input(f"{Color.YELLOW}>>> 按 Enter 繼續...{Color.RESET}")
+        self._log("⚠  請在跳出的瀏覽器視窗中登入 PChome 帳號", 'WARN')
+        self._log("⚠  登入完成後，請回到此視窗按 Enter", 'WARN')
+        input(f"{Color.YELLOW}>>> 登入完成後按 Enter 繼續...{Color.RESET}")
         self._log("登入確認完成", 'OK')
 
     def sync_cookies_to_session(self):
@@ -410,6 +477,10 @@ def main():
         '--user-profile', '-u', action='store_true',
         help='使用本機的 Chrome 設定檔 (可直接套用已登入的狀態，但須先關閉所有 Chrome 視窗)'
     )
+    parser.add_argument(
+        '--connect', '-c', action='store_true',
+        help='接管模式：連接到已經開啟除錯模式的 Chrome (搭配 launch_chrome.bat 使用)'
+    )
 
     args = parser.parse_args()
 
@@ -420,6 +491,7 @@ def main():
             browser=args.browser,
             qty=args.qty,
             use_user_profile=args.user_profile,
+            connect_mode=args.connect,
         )
         sniper.run()
     except ValueError as e:

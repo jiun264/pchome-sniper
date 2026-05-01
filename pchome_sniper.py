@@ -123,12 +123,16 @@ class PChomeSniper:
 
     @staticmethod
     def _beep(times=5):
-        if HAS_WINSOUND:
-            for _ in range(times):
-                winsound.Beep(1000, 200)
-                time.sleep(0.05)
-        else:
-            print('\a' * times)
+        """非同步發出嗶聲，不阻塞主程式"""
+        import threading
+        def run_beep():
+            if HAS_WINSOUND:
+                for _ in range(times):
+                    winsound.Beep(1000, 200)
+                    time.sleep(0.05)
+            else:
+                print('\a' * times)
+        threading.Thread(target=run_beep, daemon=True).start()
 
     # ─── API 操作 ────────────────────────────────────────────
 
@@ -247,7 +251,11 @@ class PChomeSniper:
         self._log("✅ 一般 Selenium Chrome 啟動完成", 'OK')
 
     def wait_for_login(self):
-        """自動從本機瀏覽器(Chrome/Edge)擷取登入狀態，若失敗則讓使用者手動登入"""
+        """處理登入狀態。如果是接管模式，則跳過手動確認。"""
+        if getattr(self, 'connect_mode', False):
+            self._log("接管模式：延用瀏覽器現有登入狀態，跳過手動登入確認。", 'OK')
+            return
+
         self.driver.get("https://24h.pchome.com.tw/")
         self._log("嘗試從本機 Chrome/Edge 讀取登入狀態...", 'INFO')
         
@@ -317,7 +325,7 @@ class PChomeSniper:
                     btn = wait.until(EC.element_to_be_clickable((by, selector)))
                     btn.click()
                     self._log("✅ 已點擊加入購物車按鈕！", 'OK')
-                    time.sleep(1)
+                    time.sleep(0.1)
                     return True
                 except (TimeoutException, NoSuchElementException,
                         ElementClickInterceptedException):
@@ -416,6 +424,7 @@ class PChomeSniper:
 
                 if avail:
                     self._log("🎯🎯🎯  商品可購買！立即搶購！", 'OK')
+                    self._beep(3) # 非同步嗶聲，不佔用時間
 
                     # 嘗試加入購物車
                     success = self.add_to_cart_via_browser()
@@ -424,6 +433,7 @@ class PChomeSniper:
                         # 跳轉到結帳頁面
                         self._log("正在跳轉至結帳頁面...", 'ACTION')
                         self.driver.get("https://eccart.pchome.com.tw/cart/v1/container/24H")
+                        self._beep(5)
                         self._log("已跳轉至購物車，請『立刻』完成最後結帳步驟！", 'OK')
                         self._log("══════════════════════════════════", 'OK')
                         self._log("  🎉 搶購完成！請儘速完成結帳！  ", 'OK')
